@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>URL Checker</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    body { margin: 24px; max-width: 860px; }
+    h1 { font-size: 18px; margin: 0 0 16px; }
+    label { display: block; font-weight: 600; margin: 14px 0 6px; }
+    textarea {
+      width: 100%;
+      min-height: 70px;
+      resize: vertical;
+      padding: 10px;
+      border: 1px solid #ccc;
+      border-radius: 10px;
+      font: inherit;
+      box-sizing: border-box;
+    }
+    button {
+      margin-top: 14px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      border: 1px solid #ccc;
+      background: #f7f7f7;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    button:hover { background: #f1f1f1; }
+    .card {
+      margin-top: 14px;
+      padding: 14px;
+      border: 1px solid #ddd;
+      border-radius: 12px;
+      background: #fafafa;
+    }
+    .result {
+      font-size: 16px;
+      line-height: 1.5;
+      word-break: break-word;
+    }
+    .bold { font-weight: 800; }
+    .diff { color: #d00; }
+    .hint { color: #555; font-size: 13px; margin-top: 6px; }
+    .error { color: #b00020; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h1>URL Checker</h1>
+
+  <label for="refUrl">Referenz-URL (deine echte):</label>
+  <textarea id="refUrl" placeholder="z.B. https://login.microsoftonline.com/ ..."></textarea>
+
+  <label for="checkUrl">Zu prüfende URL:</label>
+  <textarea id="checkUrl" placeholder="z.B. https://logln.microsoftonline.com/ ..."></textarea>
+
+  <button id="btn">Check URL</button>
+
+  <div class="card">
+    <div id="status" class="hint">Tipp: Du kannst auch Domains ohne https:// einfügen.</div>
+    <div id="result" class="result" aria-live="polite"></div>
+  </div>
+
+  <!-- tldts (Public Suffix + tldextract-ähnlich) -->
+  <script src="https://unpkg.com/tldts@6.1.79/dist/index.umd.min.js"></script>
+  <script>
+    const refUrlEl = document.getElementById('refUrl');
+    const checkUrlEl = document.getElementById('checkUrl');
+    const btn = document.getElementById('btn');
+    const resultEl = document.getElementById('result');
+    const statusEl = document.getElementById('status');
+
+    function normalizeInputToUrlLike(s) {
+      const t = (s || '').trim();
+      if (!t) return '';
+      // Wenn kein Scheme vorhanden ist, eins ergänzen, damit Parser robust ist.
+      if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(t)) return 'https://' + t;
+      return t;
+    }
+
+function extractParts(input) {
+  const urlLike = normalizeInputToUrlLike(input);
+  const parsed = window.tldts.parse(urlLike);
+
+  return {
+    subdomain: parsed.subdomain || '',
+    // NUR Second-Level-Domain (wie tldextract.domain)
+    domain: parsed.domainWithoutSuffix || '',
+    // NUR Public Suffix (wie tldextract.suffix)
+    suffix: parsed.publicSuffix || ''
+  };
+}
+
+
+    function escapeHtml(s) {
+      return String(s)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+    }
+
+    function renderDiffSpan(text, reference, baseClass) {
+      const maxLen = Math.max(text.length, reference.length);
+      let html = '';
+      for (let i = 0; i < maxLen; i++) {
+        const ch = i < text.length ? text[i] : '';
+        const refCh = i < reference.length ? reference[i] : '';
+        const isDiff = ch !== refCh;
+        const classes = [baseClass];
+        if (isDiff) classes.push('diff');
+        html += `<span class="${classes.join(' ')}">${escapeHtml(ch)}</span>`;
+      }
+      return html;
+    }
+
+    function formatOutput(refParts, otherParts) {
+      // Subdomain normal
+      let html = '';
+      if (otherParts.subdomain) {
+        html += `<span>${escapeHtml(otherParts.subdomain)}.</span>`;
+      }
+
+      // Domain fett + Diff
+      html += renderDiffSpan(otherParts.domain, refParts.domain, 'bold');
+
+      // Suffix fett + Diff
+      if (otherParts.suffix) {
+        html += `<span>.</span>`;
+        html += renderDiffSpan(otherParts.suffix, refParts.suffix, 'bold');
+      }
+
+      return html;
+    }
+
+    function showError(msg) {
+      statusEl.className = 'hint error';
+      statusEl.textContent = msg;
+      resultEl.innerHTML = '';
+    }
+
+    function showHint(msg) {
+      statusEl.className = 'hint';
+      statusEl.textContent = msg;
+    }
+
+    function run() {
+      const refRaw = refUrlEl.value;
+      const checkRaw = checkUrlEl.value;
+
+      if (!refRaw.trim() || !checkRaw.trim()) {
+        showError('Bitte beide Felder ausfüllen (Referenz-URL und zu prüfende URL).');
+        return;
+      }
+
+      let refParts, otherParts;
+      try {
+        refParts = extractParts(refRaw);
+        otherParts = extractParts(checkRaw);
+      } catch (e) {
+        showError('Konnte die URL(s) nicht parsen. Prüfe die Eingaben.');
+        return;
+      }
+
+      if (!refParts.domain || !refParts.suffix) {
+        showError('Referenz-URL scheint keine gültige Domain/Suffix zu enthalten.');
+        return;
+      }
+      if (!otherParts.domain || !otherParts.suffix) {
+        showError('Zu prüfende URL scheint keine gültige Domain/Suffix zu enthalten.');
+        return;
+      }
+
+      const out = formatOutput(refParts, otherParts);
+      resultEl.innerHTML = out;
+
+      // Zusatzinfo
+      showHint(
+        `Vergleich: Referenz = ${refParts.subdomain ? refParts.subdomain + '.' : ''}${refParts.domain}.${refParts.suffix}  |  Geprüft = ${otherParts.subdomain ? otherParts.subdomain + '.' : ''}${otherParts.domain}.${otherParts.suffix}`
+      );
+    }
+
+    btn.addEventListener('click', run);
+
+    // Komfort: Enter in Textarea + Ctrl/Cmd startet
+    document.addEventListener('keydown', (e) => {
+      const isCtrlEnter = (e.ctrlKey || e.metaKey) && e.key === 'Enter';
+      if (isCtrlEnter) run();
+    });
+  </script>
+</body>
+</html>
